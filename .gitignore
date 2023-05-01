@@ -1,0 +1,17 @@
+.deps
+Makefile
+Makefile.in
+aclocal.m4
+autom4te.cache
+autoscan.log
+aux
+config.h
+config.h.in
+config.log
+config.status
+configure
+configure.scan
+m4
+stamp-h1
+socks_proxy-socks-proxy.o
+socks-proxy
