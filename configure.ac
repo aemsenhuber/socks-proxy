@@ -35,6 +35,7 @@ AC_FUNC_MALLOC
 AC_FUNC_REALLOC
 AC_CHECK_FUNCS([memset])
 AC_CHECK_FUNCS([memmove])
+AC_CHECK_FUNCS([strdup])
 AC_CHECK_FUNCS([socket])
 
 # C-ares

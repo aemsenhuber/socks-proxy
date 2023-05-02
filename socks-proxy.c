@@ -26,6 +26,7 @@
 #include <errno.h>
 #include <signal.h>
 
+#include <getopt.h>
 #include <unistd.h>
 #include <poll.h>
 #include <netdb.h>
@@ -39,6 +40,8 @@
 
 ares_channel channel;
 #endif
+
+int forward_af = AF_UNSPEC;
 
 struct socksAddr {
 	char type;
@@ -395,8 +398,7 @@ int handshake_handle( struct socks_connection_pair* pair ) {
 #ifdef ARES
 				struct ares_addrinfo_hints hints;
 				memset( &hints, 0, sizeof( hints ) );
-				hints.ai_family = AF_UNSPEC;
-				hints.ai_family = AF_INET;
+				hints.ai_family = forward_af;
 				hints.ai_socktype = SOCK_STREAM;
 				hints.ai_flags = ARES_AI_NOSORT;
 
@@ -415,8 +417,7 @@ int handshake_handle( struct socks_connection_pair* pair ) {
 #else
 				struct addrinfo hints;
 				memset( &hints, 0, sizeof( hints ) );
-				hints.ai_family = AF_UNSPEC;
-				hints.ai_family = AF_INET;
+				hints.ai_family = forward_af;
 				hints.ai_socktype = SOCK_STREAM;
 
 				int ret = getaddrinfo( pair->serverToAddr.addr.dns_addr.host, portBuf, &hints, &( pair->res_base ) );
@@ -789,10 +790,67 @@ void foward_flags( struct socks_connection_pair* pair, short int* client_flags, 
  * Program entry point
  */
 int main( int argc, char** argv ) {
-	int listen_fd = -1;
-	int server_family = 0;
+	int help = 0;
+	int version = 0;
+#ifdef ARES
+	char* dns_servers = NULL;
+#define DNSOPT "d:"
+#else
+#define DNSOPT
+#endif
 
-	signal(	SIGPIPE, SIG_IGN );
+	static struct option long_options[] = {
+		{ "help", 0, NULL, 'h' },
+		{ "version", 0, NULL, 'v' },
+#ifdef ARES
+		{ "dns-servers", 1, NULL, 'd' },
+#endif
+		{ 0, 0, NULL, 0 }
+	};
+
+	while ( 1 ) {
+		int opt = getopt_long( argc, argv, "hv46" DNSOPT, long_options, NULL );
+		if ( opt < 0 ) break;
+		if ( opt == '?' ) exit( 2 );
+		if ( opt == 'h' ) help++;
+		if ( opt == 'v' ) version++;
+		if ( opt == '4' ) forward_af = AF_INET;
+		if ( opt == '6' ) forward_af = AF_INET6;
+#ifdef ARES
+		if ( opt == 'd' ) dns_servers = strdup( optarg );
+#endif
+	}
+
+	if ( version ) {
+#ifdef PACKAGE_STRING
+		fputs( PACKAGE_STRING "\n", stderr );
+#endif
+#ifdef PACKAGE_URL
+		fputs( PACKAGE_URL "\n", stderr );
+#endif
+		fputs( "\n", stderr );
+		fputs( "Copyright 2023 Alexandre Emsenhuber\n", stderr );
+		fputs( "Licensed under the Apache License, Version 2.0\n", stderr );
+
+		exit( EXIT_SUCCESS );
+	}
+
+	if ( help || ( argc - optind != 1 && argc - optind != 2 ) ) {
+		fprintf( stderr, "Usage: %s [OPTION...] [--] [<host>] <port>\n", argv[0] );
+
+		if ( help ) {
+			fputs( "\n", stderr );
+			fputs( "Program options:\n", stderr );
+			fputs( "  -h --help              Display this help message and exit\n", stderr );
+			fputs( "  -v --version           Display version information and exit\n", stderr );
+			fputs( "  -4                     Only allow forward connections to IPv4 addresses\n", stderr );
+			fputs( "  -6                     Only allow forward connections to IPv6 addresses\n", stderr );
+			fputs( "  -d --dns-servers=LIST  Comma-separated list of DNS servers (and ports) to use instead of resolv.conf\n", stderr );
+			exit( EXIT_SUCCESS );
+		} else {
+			exit( 2 );
+		}
+	}
 
 #ifdef ARES
 	int ares = ares_library_init( ARES_LIB_INIT_ALL );
@@ -806,20 +864,36 @@ int main( int argc, char** argv ) {
 		fprintf( stderr, "ares initialization failure: %s\n", ares_strerror( ares ) );
 		exit( EXIT_FAILURE );
 	}
+
+	if ( dns_servers != NULL ) {
+		ares = ares_set_servers_ports_csv( channel, dns_servers );
+		if ( ares != ARES_SUCCESS ) {
+			fprintf( stderr, "failure setting DNS servers: %s\n", ares_strerror( ares ) );
+			exit( EXIT_FAILURE );
+		}
+
+		free( dns_servers );
+		dns_servers = NULL;
+	}
 #endif
 
 	char* server_addr = NULL;
 	char* server_port = NULL;
 
-	if ( argc == 2 ) {
-		server_port = argv[ 1 ];
-	} else if ( argc == 3 ) {
-		server_addr = argv[ 1 ];
-		server_port = argv[ 2 ];
+	if ( argc - optind == 1 ) {
+		server_port = argv[ optind + 0 ];
+	} else if ( argc - optind == 2 ) {
+		server_addr = argv[ optind + 0 ];
+		server_port = argv[ optind + 1 ];
 	} else {
 		fprintf( stderr, "Usage: %s [host] port\n", argv[ 0 ] );
 		exit( 2 );
 	}
+
+	signal(	SIGPIPE, SIG_IGN );
+
+	int listen_fd = -1;
+	int server_family = 0;
 
 	struct addrinfo hints;
 	memset( &hints, '\0', sizeof( hints ) );
